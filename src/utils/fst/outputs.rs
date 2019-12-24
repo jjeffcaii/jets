@@ -1,3 +1,5 @@
+use crate::utils::FOR;
+
 pub trait Outputs {
     type Item;
     fn zero(&self) -> Self::Item;
@@ -7,12 +9,11 @@ pub trait Outputs {
     fn merge(&self, prev: &Self::Item, next: &Self::Item) -> Self::Item;
 }
 
-pub struct DefaultOutputs;
-
-struct OutputsU32s;
-struct OutputsU32;
-struct OutputsU64;
-struct OutputsU64s;
+pub struct OutputsU32s;
+pub struct OutputsU32;
+pub struct OutputsU64;
+pub struct OutputsU64s;
+pub struct OutputsFOR;
 
 impl Outputs for OutputsU32 {
     type Item = u32;
@@ -67,6 +68,28 @@ impl Outputs for OutputsU64 {
 
     fn merge(&self, _prev: &u64, next: &u64) -> u64 {
         next.clone()
+    }
+}
+
+impl Outputs for OutputsFOR {
+    type Item = FOR;
+
+    fn add(&self, prefix: &FOR, output: &FOR) -> FOR {
+        unimplemented!()
+    }
+
+    fn zero(&self) -> FOR {
+        unimplemented!()
+    }
+
+    fn subtract(&self, output: &FOR, inc: &FOR) -> FOR {
+        unimplemented!()
+    }
+    fn common(&self, a: &FOR, b: &FOR) -> FOR {
+        unimplemented!()
+    }
+    fn merge(&self, prev: &FOR, next: &FOR) -> FOR {
+        unimplemented!()
     }
 }
 
@@ -171,20 +194,5 @@ impl Outputs for OutputsU64s {
 
     fn zero(&self) -> Vec<u64> {
         vec![]
-    }
-}
-
-impl DefaultOutputs {
-    pub fn u32() -> impl Outputs<Item = u32> {
-        OutputsU32
-    }
-    pub fn vec_u32() -> impl Outputs<Item = Vec<u32>> {
-        OutputsU32s
-    }
-    pub fn u64() -> impl Outputs<Item = u64> {
-        OutputsU64
-    }
-    pub fn vec_u64() -> impl Outputs<Item = Vec<u64>> {
-        OutputsU64s
     }
 }

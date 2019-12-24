@@ -1,52 +1,47 @@
-use super::doc::Document;
-use super::spi::{Readable, Writeable};
+use super::doc::DocValue;
+use crate::spi::Result;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use rocksdb::{IteratorMode, Options, Snapshot, WriteBatch, DB};
-use std::error::Error;
-use std::result::Result;
+use rocksdb::DB;
 
-pub struct DocumentStore {
+const ROW_KEY_METADATA: [u8; 1] = [0];
+
+pub struct DocValueStore {
     db: DB,
 }
 
-impl DocumentStore {
-    pub(crate) fn open(path: &str) -> Result<DocumentStore, Box<dyn Error>> {
+impl DocValueStore {
+    pub fn open(path: &str) -> Result<DocValueStore> {
         match DB::open_default(path) {
-            Ok(db) => Ok(DocumentStore { db }),
+            Ok(db) => Ok(DocValueStore { db }),
             Err(e) => Err(Box::new(e)),
         }
     }
 
-    pub(crate) fn get(&self, id: u64) -> Result<Option<Document>, Box<dyn Error>> {
-        match self.db.get(Self::get_u64_bytes(id)) {
-            Ok(Some(raw)) => {
-                let mut doc = Document::new(id);
-                let bf = Bytes::from(raw);
-                match doc.read_from(&bf) {
-                    Ok(()) => Ok(Some(doc)),
-                    Err(e) => Err(e),
-                }
-            }
+    pub fn get(&self, id: u64, field: u32, field_type: u8) -> Result<Option<DocValue>> {
+        let row = Self::to_row_key(id, field);
+        match self.db.get(row) {
+            Ok(Some(raw)) => Ok(Some(DocValue::decode(field_type, raw)?)),
             Ok(None) => Ok(None),
             Err(e) => Err(Box::new(e)),
         }
     }
 
-    pub(crate) fn write(&self, doc: Document) -> Result<(), Box<dyn Error>> {
-        let id = Self::get_u64_bytes(doc.get_id());
-        let mut bf = BytesMut::new();
-        doc.write_to(&mut bf)?;
-        match self.db.put(id, bf.to_vec()) {
+    pub fn write(&self, id: u64, field: u32, value: &DocValue) -> Result<()> {
+        let row = Self::to_row_key(id, field);
+        match self.db.put(row, value.bytes()) {
             Ok(()) => Ok(()),
             Err(e) => Err(Box::new(e)),
         }
     }
 
     #[inline]
-    fn get_u64_bytes(n: u64) -> [u8; 8] {
-        let mut b: [u8; 8] = [0; 8];
+    fn to_row_key(id: u64, field: u32) -> [u8; 12] {
+        let mut b: [u8; 12] = [0; 12];
         for i in 0..8 {
-            b[i] = (n >> (i * 8) & 0xFF) as u8;
+            b[i] = ((id >> (i * 8)) & 0xFF) as u8;
+        }
+        for i in 0..4 {
+            b[i + 8] = ((field >> (i * 8)) & 0xFF) as u8;
         }
         b
     }

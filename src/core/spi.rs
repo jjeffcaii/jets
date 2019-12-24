@@ -1,11 +1,11 @@
+use crate::io::Writer;
+use crate::spi::Result;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use std::error::Error;
-use std::result::Result;
 
 pub trait Readable {
-    fn read_from(&mut self, bf: &Bytes) -> Result<(), Box<dyn Error>>;
+    fn read_from(&mut self, bf: &mut Bytes) -> Result<()>;
 }
 
 pub trait Writeable {
-    fn write_to(&self, bf: &mut BytesMut) -> Result<(), Box<dyn Error>>;
+    fn write_to(&self, bf: &mut BytesMut) -> Result<()>;
 }

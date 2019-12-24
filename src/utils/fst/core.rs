@@ -1,11 +1,12 @@
-use super::codec::{Codec, CodecV32};
+use super::codec::Codec;
 use super::outputs::Outputs;
-use crate::utils::Stack;
-use bytes::{Buf, BufMut, BytesMut};
-use std::collections::LinkedList;
-use std::error::Error;
-use std::str::Chars;
-use std::sync::{Arc, Mutex};
+use crate::io::Writer;
+use crate::spi::Result;
+use crate::utils::{get_v32, put_v32, Stack};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
+use std::rc::Rc;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Mutex;
 
 const FLAG_FINAL: u8 = 0x01 << 0;
 const FLAG_HAS_VALUE: u8 = 0x01 << 1;
@@ -16,15 +17,15 @@ where
     O: Outputs<Item = T>,
 {
     outputs: O,
-    lines: LinkedList<Line<T>>,
+    lines: Vec<Line<T>>,
 }
 
 pub struct Line<T> {
-    label: char,
+    label: u8,
     value: Option<T>,
     flag: u8,
     final_value: Option<T>,
-    nexts: LinkedList<Line<T>>,
+    nexts: Vec<Line<T>>,
 }
 
 impl<T, O> FST<T, O>
@@ -36,20 +37,17 @@ where
         Builder::new(outputs)
     }
 
-    pub fn decode(
-        outputs: O,
-        decoder: &impl Codec<Item = T>,
-        bf: &mut BytesMut,
-    ) -> Result<FST<T, O>, Box<dyn Error>> {
-        let mut parser = Parser::new(outputs);
-        parser.read(decoder, bf);
-        Ok(parser.build())
+    pub fn decoder<D>(outputs: O, decoder: D) -> Decoder<T, O, D>
+    where
+        D: Codec<Item = T>,
+    {
+        Decoder::new(outputs, decoder)
     }
 
     fn new(outputs: O) -> FST<T, O> {
         FST {
             outputs,
-            lines: LinkedList::new(),
+            lines: vec![],
         }
     }
 
@@ -59,35 +57,36 @@ where
         }
     }
 
-    pub fn get(&self, key: &str) -> Option<T> {
+    pub fn get<K>(&self, key: K) -> Option<T>
+    where
+        K: AsRef<[u8]>,
+    {
         if self.lines.is_empty() {
             return None;
         }
-        let mut chars = key.chars();
-        if let Some(ch) = chars.next() {
-            for it in &self.lines {
-                if it.label == ch {
-                    let mut sum = self.outputs.zero();
-                    if it.sum(chars, &mut sum, &self.outputs) {
-                        return Some(sum);
-                    }
-                    break;
+        let mut chars = key.as_ref();
+        if chars.len() > 0 {
+            let first = chars[0];
+            chars = &chars[1..];
+            if let Some(bingo) = binary_search(&self.lines, first) {
+                let it = &self.lines[bingo];
+                let mut sum = self.outputs.zero();
+                if it.sum(chars, &mut sum, &self.outputs) {
+                    return Some(sum);
                 }
             }
         }
         None
     }
 
-    pub fn save(&self, dest: &mut BytesMut, encoder: &impl Codec<Item = T>) {
-        let bf = Arc::new(Mutex::new(BytesMut::new()));
-        let bf_cloned = bf.clone();
-        let amount = Arc::new(Mutex::new(0 as u32));
+    pub fn save(&self, writer: &mut impl Writer, encoder: impl Codec<Item = T>) -> Result<usize> {
+        let amount: Rc<AtomicU32> = Rc::new(Default::default());
+        let wrote = Rc::new(AtomicU32::new(4));
+        let buff = Rc::new(Mutex::new(BytesMut::new()));
         self.traverse(|next: &Line<T>| {
-            let mut c = amount.lock().unwrap();
-            *c = *c + 1;
-            let mut bf = bf_cloned.lock().unwrap();
-            let label = next.get_label() as u32;
-            CodecV32.write(&mut bf, &label).unwrap();
+            amount.fetch_add(1, Ordering::SeqCst);
+            let mut bf = buff.lock().unwrap();
+            bf.put_u8(next.get_label());
             let mut flag = next.flag;
             if let Some(v) = &next.value {
                 if self.outputs.zero() != *v {
@@ -110,11 +109,11 @@ where
 
             bf.put_u8(flag);
             if follower_amount >= 31 {
-                CodecV32.write(&mut bf, &follower_amount).unwrap();
+                put_v32(&mut bf, follower_amount).unwrap();
             }
             if flag & FLAG_HAS_VALUE != 0 {
                 if let Some(v) = &next.value {
-                    encoder.write(&mut bf, v).unwrap();
+                    &encoder.write(&mut bf, v).unwrap();
                 }
             }
             if flag & FLAG_HAS_FINAL_VALUE != 0 {
@@ -122,24 +121,32 @@ where
                     encoder.write(&mut bf, v).unwrap();
                 }
             }
+            wrote.fetch_add(bf.len() as u32, Ordering::SeqCst);
         });
-        dest.put_u32(*amount.lock().unwrap());
-        dest.put_slice(bf.lock().unwrap().bytes());
+        writer.put_u32(amount.load(Ordering::SeqCst));
+        writer.put_slice(buff.lock().unwrap().bytes());
+        Ok(4 + wrote.load(Ordering::SeqCst) as usize)
     }
 
-    fn push(&mut self, key: &str, value: T) {
-        let mut chars = key.chars();
-        if let Some(first) = chars.next() {
-            for it in &mut self.lines {
-                if it.label == first {
-                    it.push(chars, Some(value), &self.outputs);
-                    return;
-                }
-            }
-            let mut newborn = Line::new(first);
-            newborn.push(chars, Some(value), &self.outputs);
-            self.lines.push_back(newborn);
+    fn push<K>(&mut self, key: K, value: T)
+    where
+        K: AsRef<[u8]>,
+    {
+        let mut chars = key.as_ref();
+        if chars.len() < 1 {
+            return;
         }
+        let first = chars[0];
+        chars = &chars[1..];
+        for it in &mut self.lines {
+            if it.label == first {
+                it.push(chars, Some(value), &self.outputs);
+                return;
+            }
+        }
+        let mut newborn = Line::new(first);
+        newborn.push(chars, Some(value), &self.outputs);
+        self.lines.push(newborn);
     }
 }
 
@@ -148,13 +155,13 @@ where
     T: Eq,
 {
     #[inline]
-    fn new(label: char) -> Line<T> {
+    fn new(label: u8) -> Line<T> {
         Line {
             label,
             value: None,
             final_value: None,
             flag: 0,
-            nexts: LinkedList::new(),
+            nexts: vec![],
         }
     }
 
@@ -210,28 +217,27 @@ where
         }
     }
 
-    fn push(&mut self, mut chars: Chars, insert: Option<T>, op: &impl Outputs<Item = T>) {
+    fn push(&mut self, mut chars: &[u8], insert: Option<T>, op: &impl Outputs<Item = T>) {
         let actual = self.push_pre(insert, op);
-        match chars.next() {
-            Some(ch) => {
-                for next in &mut self.nexts {
-                    if next.label == ch {
-                        next.push(chars, actual, op);
-                        return;
-                    }
-                }
-                let mut newborn = Line::new(ch);
-                newborn.push(chars, actual, op);
-                self.nexts.push_back(newborn);
+        if chars.len() < 1 {
+            // check final stat
+            self.flag |= FLAG_FINAL;
+            if let Some(value) = actual {
+                self.set_final_value(value, op);
             }
-            None => {
-                // check final stat
-                self.flag |= FLAG_FINAL;
-                if let Some(value) = actual {
-                    self.set_final_value(value, op);
-                }
+            return;
+        }
+        let ch = chars[0];
+        chars = &chars[1..];
+        for next in &mut self.nexts {
+            if next.label == ch {
+                next.push(chars, actual, op);
+                return;
             }
         }
+        let mut newborn = Line::new(ch);
+        newborn.push(chars, actual, op);
+        self.nexts.push(newborn);
     }
 
     #[inline]
@@ -243,36 +249,33 @@ where
     }
 
     #[inline]
-    fn sum(&self, mut chars: Chars, results: &mut T, op: &impl Outputs<Item = T>) -> bool {
+    fn sum(&self, mut chars: &[u8], results: &mut T, op: &impl Outputs<Item = T>) -> bool {
         if let Some(value) = &self.value {
             *results = op.add(results, value);
         }
-        match chars.next() {
-            Some(ch) => {
-                for next in &self.nexts {
-                    if next.label == ch {
-                        return next.sum(chars, results, op);
-                    }
-                }
-                false
+        if chars.len() < 1 {
+            if self.flag & FLAG_FINAL == 0 {
+                return false;
             }
-            None => {
-                if self.flag & FLAG_FINAL == 0 {
-                    return false;
-                }
-                if let Some(v) = &self.final_value {
-                    *results = op.add(results, v);
-                }
-                true
+            if let Some(v) = &self.final_value {
+                *results = op.add(results, v);
             }
+            return true;
         }
+        let ch = chars[0];
+        chars = &chars[1..];
+        if let Some(bingo) = binary_search(&self.nexts, ch) {
+            let next = &self.nexts[bingo];
+            return next.sum(chars, results, op);
+        }
+        false
     }
 
-    pub fn get_nexts(&self) -> &LinkedList<Line<T>> {
+    pub fn get_nexts(&self) -> &Vec<Line<T>> {
         &self.nexts
     }
 
-    pub fn get_label(&self) -> char {
+    pub fn get_label(&self) -> u8 {
         self.label
     }
 
@@ -296,51 +299,55 @@ where
     inner: FST<T, O>,
 }
 
-pub struct Parser<T, O>
+pub struct Decoder<T, O, D>
 where
     O: Outputs<Item = T>,
+    D: Codec<Item = T>,
 {
     inner: FST<T, O>,
+    decoder: D,
     stack: Stack<(Line<T>, usize)>,
 }
 
-impl<T, O> Parser<T, O>
+impl<T, O, D> Decoder<T, O, D>
 where
     T: Eq,
     O: Outputs<Item = T>,
+    D: Codec<Item = T>,
 {
-    fn new(outputs: O) -> Parser<T, O> {
-        Parser {
+    #[inline]
+    fn new(outputs: O, decoder: D) -> Decoder<T, O, D> {
+        Decoder {
             inner: FST::new(outputs),
+            decoder,
             stack: Stack::new(),
         }
     }
 
-    fn read(&mut self, decoder: &impl Codec<Item = T>, bf: &mut BytesMut) {
+    pub fn decode(mut self, bf: &mut Bytes) -> Result<FST<T, O>> {
         for _ in 0..bf.get_u32() {
-            let label = std::char::from_u32(CodecV32.read(bf).unwrap()).unwrap();
+            let label = bf.get_u8();
             let flag = bf.get_u8();
             let mut followers = ((flag & 0xF8) >> 3) as u32;
             if followers == 31 {
-                followers = CodecV32.read(bf).unwrap();
+                followers = get_v32(bf).unwrap();
             }
             let value = if flag & FLAG_HAS_VALUE != 0 {
-                Some(decoder.read(bf).unwrap())
+                Some(self.decoder.read(bf).unwrap())
             } else {
                 None
             };
             let final_value = if flag & FLAG_HAS_FINAL_VALUE != 0 {
-                Some(decoder.read(bf).unwrap())
+                Some(self.decoder.read(bf).unwrap())
             } else {
                 None
             };
-
             let current = Line {
                 label,
                 value,
                 final_value,
                 flag,
-                nexts: LinkedList::new(),
+                nexts: vec![],
             };
             let is_leaf = current.is_final() && followers < 1;
             if !is_leaf {
@@ -349,13 +356,15 @@ where
             }
             self.shift(current);
         }
+        Ok(self.inner)
     }
 
-    pub fn shift(&mut self, current: Line<T>) {
+    #[inline]
+    fn shift(&mut self, current: Line<T>) {
         match self.stack.pop() {
-            None => self.inner.lines.push_back(current),
+            None => self.inner.lines.push(current),
             Some((mut parent, n)) => {
-                parent.nexts.push_back(current);
+                parent.nexts.push(current);
                 if parent.nexts.len() == n {
                     self.shift(parent);
                 } else {
@@ -364,10 +373,6 @@ where
             }
         }
     }
-
-    pub fn build(mut self) -> FST<T, O> {
-        self.inner
-    }
 }
 
 impl<T, O> Builder<T, O>
@@ -375,18 +380,30 @@ where
     T: Eq,
     O: Outputs<Item = T>,
 {
+    #[inline]
     fn new(outputs: O) -> Builder<T, O> {
         Builder {
             inner: FST::new(outputs),
         }
     }
 
-    pub fn push(mut self, key: &str, value: T) -> Self {
+    pub fn push<K>(mut self, key: K, value: T) -> Self
+    where
+        K: AsRef<[u8]>,
+    {
         self.inner.push(key, value);
         self
     }
 
     pub fn build(self) -> FST<T, O> {
         self.inner
+    }
+}
+
+#[inline]
+fn binary_search<T>(inputs: &Vec<Line<T>>, target: u8) -> Option<usize> {
+    match inputs.binary_search_by(|v| v.label.cmp(&target)) {
+        Ok(n) => Some(n),
+        Err(_) => None,
     }
 }
