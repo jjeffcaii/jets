@@ -1,10 +1,10 @@
-pub enum GroupOp {
+pub enum Operator {
     AND,
     OR,
 }
 
 pub enum Condition {
-    Group(GroupOp, Vec<Condition>),
+    Group(Operator, Vec<Condition>),
     Term(String, String),
 }
 

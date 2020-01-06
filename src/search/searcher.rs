@@ -1,4 +1,4 @@
-use super::query::{Condition, GroupOp, Query};
+use super::query::{Condition, Operator, Query};
 use crate::core::DocValue;
 use crate::core::Document;
 use crate::core::IndexReader;
@@ -82,7 +82,7 @@ impl IndexSearcher {
                 }
                 // TODO: tuning: use FOR skip table or bitsets filter.
                 let merge: Vec<u64> = match op {
-                    GroupOp::AND => {
+                    Operator::AND => {
                         let should = holder.len();
                         let mut map: HashMap<u64, usize> = HashMap::new();
                         for each in holder {
@@ -104,7 +104,7 @@ impl IndexSearcher {
                         result.sort();
                         result
                     }
-                    GroupOp::OR => {
+                    Operator::OR => {
                         let mut sets = HashSet::new();
                         for it in holder {
                             sets.insert(it);

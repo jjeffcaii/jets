@@ -4,7 +4,7 @@ use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, Options, WriteBatch, DB};
 
 #[test]
 fn test() {
-    let path = "/Users/jeffsky/jets/_rocks_test";
+    let path = "/tmp/jets/_rocks_test";
     let mut opts = Options::default();
     opts.create_if_missing(true);
     opts.create_missing_column_families(true);

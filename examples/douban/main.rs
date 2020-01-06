@@ -78,19 +78,17 @@ fn main() -> Result<(), Box<dyn Error>> {
             let mut reader = BufReader::new(f);
             let mut line = String::new();
             let mut writer = IndexWriter::open(output, JiebaTokenizer::default())?;
-            let mut id = 1u64;
             while let Ok(read) = reader.read_line(&mut line) {
                 if read < 1 {
                     break;
                 }
                 if let Ok(film) = serde_json::from_str::<FilmInfo>(&line) {
                     debug!("**** read: {:?}", film);
-                    let doc = Document::builder(id)
+                    let doc = Document::builder()
                         .put("title", DocValue::Text(film.title), FLAG_TOKENIZED)
                         .put("year", DocValue::Text(film.year), 0)
                         .build();
                     writer.push(doc)?;
-                    id += 1;
                 }
                 line.clear();
             }
@@ -114,12 +112,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
             info!("-------------------------------------");
+            let cost = Duration::from_nanos((cost1.as_nanos() + cost2.as_nanos()) as u64);
             info!(
-                "amount={}, cost={}ms ({}+{})",
+                "amount={}, cost={}ms ({}ns: index={}, docs={})",
                 amount,
-                Duration::from_nanos(cost1.as_nanos() as u64 + cost2.as_nanos() as u64).as_millis(),
+                cost.as_millis(),
+                cost.as_nanos(),
                 cost1.as_nanos(),
-                cost2.as_nanos()
+                cost2.as_nanos(),
             );
         }
     };

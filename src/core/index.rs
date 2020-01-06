@@ -261,7 +261,7 @@ impl IndexReader {
         if fields.len() < 1 {
             return None;
         }
-        let mut bu = Document::builder(id);
+        let mut bu = Document::builder_with_id(id);
         for field in fields {
             if let Ok(Some(dv)) = self.store.get(id, field.get_id(), field.get_kind()) {
                 bu = bu.put(field.get_name(), dv, 0);

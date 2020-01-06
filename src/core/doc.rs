@@ -133,8 +133,12 @@ impl Document {
         }
     }
 
-    pub fn builder(id: u64) -> DocumentBuilder {
+    pub(crate) fn builder_with_id(id: u64) -> DocumentBuilder {
         DocumentBuilder::new(id)
+    }
+
+    pub fn builder() -> DocumentBuilder {
+        DocumentBuilder::new(0)
     }
 
     pub(crate) fn push(&mut self, field: Field) {

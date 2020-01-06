@@ -17,7 +17,7 @@ fn init() {
 #[test]
 fn test_document_store() {
     init();
-    let path = format!("/Users/jeffsky/jets/test_store");
+    let path = format!("/tmp/jets/test_store");
     let mut store = DocValueStore::open(&path).unwrap();
     for i in 0..amount {
         match store.get(i as u64, 0, 0) {

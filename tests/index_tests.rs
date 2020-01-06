@@ -2,7 +2,7 @@
 extern crate log;
 extern crate jets;
 
-use jets::analysis::{JiebaTokenizer, Tokenizer};
+use jets::analysis::JiebaTokenizer;
 use jets::core::*;
 use jets::search::*;
 use std::time::Instant;
@@ -34,9 +34,7 @@ fn test_index_read() {
         let doc = reader.document(i).unwrap();
         println!("next #{}: {:?}", i, doc);
     }
-    let founds = reader
-        .find("nickname", DocValue::String("bar_8888".to_string()))
-        .unwrap();
+    let founds = reader.find("nickname", DocValue::from("bar_8888")).unwrap();
     for id in founds.iter() {
         let result = reader.document(*id).unwrap();
         info!("####### found: {:?}", result);
@@ -44,23 +42,16 @@ fn test_index_read() {
 }
 
 fn mock_doc(id: u64) -> Document {
-    let f1 = Field::new(
-        "name".to_string(),
-        DocValue::String(format!("foo_{}", id)),
-        0,
-    );
-    let f2 = Field::new(
-        "nickname".to_string(),
-        DocValue::String(format!("bar_{}", id)),
-        0,
-    );
-    Document::builder(id).put(f1).put(f2).build()
+    Document::builder()
+        .put("name", DocValue::Text(format!("foo_{}", id)), 0)
+        .put("nickname", DocValue::Text(format!("bar_{}", id)), 0)
+        .build()
 }
 
 #[test]
 fn test_text_index_write() {
     init();
-    let inputs = vec![
+    let inputs: Vec<&str> = vec![
         "我爱北京天安门",
         "上海是我们的家",
         "我们中出了个叛徒",
@@ -69,12 +60,8 @@ fn test_text_index_write() {
     let path = "/tmp/jets/TEST_TEXT";
     let mut writer = IndexWriter::open(path, JiebaTokenizer::default()).unwrap();
     for i in 0..inputs.len() {
-        let doc = Document::builder(i as u64)
-            .put(Field::new(
-                "content".to_string(),
-                DocValue::Text(inputs[i].to_string()),
-                0,
-            ))
+        let doc = Document::builder()
+            .put("content", DocValue::from(inputs[i]), FLAG_TOKENIZED)
             .build();
         writer.push(doc).unwrap();
     }
@@ -102,7 +89,7 @@ fn test_fulltext_index_searcher() {
     )));
 
     submit(Query::from(Condition::Group(
-        GroupOp::OR,
+        Operator::OR,
         vec![
             Condition::Term("content".to_string(), "上海".to_string()),
             Condition::Term("content".to_string(), "北京".to_string()),
@@ -110,7 +97,7 @@ fn test_fulltext_index_searcher() {
     )));
 
     submit(Query::from(Condition::Group(
-        GroupOp::AND,
+        Operator::AND,
         vec![
             Condition::Term("content".to_string(), "长城".to_string()),
             Condition::Term("content".to_string(), "北京".to_string()),
