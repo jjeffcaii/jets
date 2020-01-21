@@ -7,14 +7,10 @@ fn test_jieba_cut() {
         "上海是我们的家",
         "我们中出了个叛徒",
         "北京有长城",
+        "在伦敦奥运会上将可能有一位沙特阿拉伯的女子"
+        
     ];
     let jieba = Jieba::new();
-    {
-        let text = "Analysis is one of the main causes of slow indexing. Simply put, the more you analyze the slower analyze the indexing (in most cases).";
-        let words = jieba.cut_for_search(text, false);
-        println!("words: {:?}", words);
-    }
-
     for input in inputs {
         let words = jieba.cut_for_search(input, false);
         println!("words: {:?}", words);

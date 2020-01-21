@@ -106,7 +106,12 @@ impl FOR {
                 let v = if j == 0 {
                     inputs[k]
                 } else {
-                    inputs[k] - inputs[k - 1]
+                    if inputs[k] < inputs[k - 1] {
+                        println!("****** sub failed: {:?}", inputs);
+                        0
+                    } else {
+                        inputs[k] - inputs[k - 1]
+                    }
                 };
                 or |= v;
                 diffs.push_back(v);
