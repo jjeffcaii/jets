@@ -28,3 +28,13 @@ Jets is a search engine toolkit written in Rust. (未完工, 纯属业余自娱�
   - [ ] Geo: Geohash
 
 #### Milestone 2
+
+- [ ] Cluster
+  - [ ] Gossip
+  - [ ] Sharding && Replica
+  - [ ] ...
+
+### Similar Projects
+
+- [rucene](https://github.com/zhihu/rucene)
+- [sonic](https://github.com/valeriansaliou/sonic)
